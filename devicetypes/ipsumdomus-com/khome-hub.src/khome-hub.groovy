@@ -18,7 +18,7 @@ metadata {
 		capability "Sensor"
         capability "Polling"
         
-        attribute "currentIP", "string"
+        //attribute "currentIP", "string"
         
         command "setOffline"
 	}
@@ -52,9 +52,10 @@ def parse(String description) {
     def bodyString = msg.body
     if (bodyString) {
         unschedule("setOffline")
-         if (device.currentValue("currentIP") == "Offline") {
+        log.debug "Hub state: ${device.currentValue("hubInfo")}"
+         if (device.currentValue("hubInfo") == "Offline") {
                 def ipvalue = convertHexToIP(getDataValue("ip"))
-                sendEvent(name: "IP", value: ipvalue, descriptionText: "IP is ${ipvalue}")
+                sendEvent(name: "hubInfo", value: ipvalue, descriptionText: "IP is ${ipvalue}")
                 //events << createEvent(name:"hubInfo", value:result.message)
          }
      }
@@ -63,12 +64,12 @@ def parse(String description) {
 
 def setOffline() {
 	//sendEvent(name: "currentIP", value: "Offline", displayed: false)
-    sendEvent(name: "hubInfo", value: "offline", descriptionText: "The device is offline")
+    sendEvent(name: "hubInfo", value: "Offline", descriptionText: "The device is offline")
 }
 
 def poll() {
 	log.debug "Polling hub"
-    if (device.currentValue("currentIP") != "Offline")
+    if (device.currentValue("hubInfo") != "Offline")
         runIn(30, setOffline)
 }
 
@@ -86,4 +87,8 @@ def sync(ip, port) {
 
 private String convertHexToIP(hex) {
     return [convertHexToInt(hex[0..1]),convertHexToInt(hex[2..3]),convertHexToInt(hex[4..5]),convertHexToInt(hex[6..7])].join(".")
+}
+
+private Integer convertHexToInt(hex) {
+    return Integer.parseInt(hex,16)
 }
