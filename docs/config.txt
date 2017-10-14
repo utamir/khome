@@ -1,0 +1,121 @@
+sudo vi /etc/wpa_supplicant/wpa_supplicant.conf
+
+
+country=GB
+ctrl_interface=DIR=/var/run/wpa_supplicant GROUP=netdev
+update_config=1
+
+network={
+    ssid="SSID_OF_NETWORK"
+    psk="NETWORK_PASSWORD"
+}
+
+---------------|| not needed ||----------------
+
+sudo vi /etc/network/interfaces
++++++++++++++++++++++++++++++++++++++++++++++++
+source-directory /etc/network/interfaces.d
+
+auto lo
+auto eth0
+auto wlan0
+auto uap0
+
+iface eth0 inet dhcp
+iface lo inet loopback
+
+allow-hotplug wlan0
+
+iface wlan0 inet dhcp
+wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+
+iface uap0 inet static
+  address 192.168.50.1
+  netmask 255.255.255.0
+  network 192.168.50.0
+  broadcast 192.168.50.255
+  gateway 192.168.50.1
+  
+  -----------------------------------------------------
+  sudo reboot
+  -----------------------------------------------------
+  iw dev wlan0 link
+  -----------------------------------------------------
+  sudo apt-get install hostapd dnsmasq
+  -----------------------------------------------------
+  sudo vi /etc/hostapd/hostapd.conf
+  +++++++++++++++++++++++++++++++++++++++++++++++++++++
+  interface=uap0
+ssid=testPiAP
+hw_mode=g
+channel=11
+macaddr_acl=0
+auth_algs=1
+ignore_broadcast_ssid=0
+wpa=2
+wpa_passphrase=badpassword
+wpa_key_mgmt=WPA-PSK
+wpa_pairwise=TKIP
+rsn_pairwise=CCMP
+---------------------------------------------------------
+iwlist wlan0 channel
+---------------------------------------------------------
+sudo vi /etc/default/hostapd
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+DAEMON_CONF="/etc/hostapd/hostapd.conf"
+---------------------------------------------------------
+sudo vi /usr/local/bin/hostapdstart
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+#!/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+iw dev wlan0 interface add uap0 type __ap
+service dnsmasq restart
+sysctl net.ipv4.ip_forward=1
+iptables -t nat -A POSTROUTING -s 192.168.50.0/24 ! -d 192.168.50.0/24 -j MASQUERADE
+ifup uap0
+hostapd /etc/hostapd/hostapd.conf
+---------------------------------------------------------
+chmod 775 /usr/local/bin/hostapdstart
+---------------------------------------------------------
+sudo vi /etc/dnsmasq.conf
++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+interface=lo,uap0
+no-dhcp-interface=lo,wlan0
+bind-interfaces
+server=8.8.8.8
+domain-needed
+bogus-priv
+dhcp-range=192.168.50.50,192.168.50.150,12h
+----------------------------------------------------------
+sudo service dnsmasq start
+----------------------------------------------------------
+sudo vi /etc/rc.local
+++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+/bin/bash /usr/local/bin/hostapdstart
+----------------------------------------------------------
+sudo reboot
+----------------------------------------------------------
+http://imti.co/post/145442415333/raspberry-pi-3-wifi-station-ap
+^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^6
+
+
+//sudo nano /etc/init.d/superscript ||
+sudo nano /etc/rc.local
++++++++++++++++++++++++++++++++++++++++++++
+iw dev wlan0 interface add uap0 type __ap
+-------------------------------------------
+//sudo chmod 755 /etc/init.d/superscript
+-------------------------------------------
+//sudo update-rc.d superscript defaults
+-------------------------------------------
+sudo nano /etc/modprobe.d/iwlwifi.conf
+++++++++++++++++++++++++++++
+options iwlwifi 11n_disable=1 wd_disable=1
+----------------------------------
+ sudo nano /etc/udev/rules.d/69-bring-ap.rules
++++++++++++++++++++++++++++++++++++
+
+SUBSYSTEM=="ieee80211", ACTION=="add|change", ATTR{macaddress}=="b8:27:eb:66:55:4e", KERNEL=="phy0", \
+  RUN+="/sbin/iw phy phy0 interface add uap0 type __ap", \
+  RUN+="/bin/ip link set uap0 address b8:27:eb:66:55:4f"
+

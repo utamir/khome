@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<root xmlns="urn:schemas-upnp-org:device-1-0" configId="1">
+	<specVersion>
+		<major>1</major>
+		<minor>1</minor>
+	</specVersion>
+	<device>
+		<deviceType>%s</deviceType>
+		<friendlyName>%s</friendlyName>
+		<manufacturer>%s</manufacturer>
+		<manufacturerURL>%s</manufacturerURL>
+		<modelDescription>%s</modelDescription>
+		<modelName>%s</modelName>
+		<modelNumber>%s</modelNumber>
+		<modelURL>%s</modelURL>
+		<serialNumber>%s</serialNumber>		
+		<UDN>%s</UDN>
+		<UPC>%s</UPC>
+		<!--iconList>
+			<icon>
+			<mimetype>image/png</mimetype>
+			<height>48</height>
+			<width>48</width>
+			<depth>24</depth>
+			<url>/images/twonkyicon-48x48.png</url>
+			</icon>
+		</iconList-->
+		<serviceList>
+			%s
+		</serviceList>
+		<!--deviceList>
+		</deviceList-->
+		<presentationURL>%s</presentationURL>
+	</device>
+</root> 
