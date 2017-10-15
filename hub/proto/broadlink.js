@@ -43,7 +43,7 @@ BLK.Hello = {
     Response : (buffer) =>{
         var res = {};
 
-        res.ip = _readIp(buffer, 54);
+        res.ip = _readIp(buffer, 54); //cannot trust x36 buffer since some devices are sending it in reverse order and not evidence of order found.
         res.mac = _readMac(buffer,58);
         res.type = _readType(buffer,64);
 		res.did = _readMac(buffer,58).split(':').join('');
@@ -136,10 +136,9 @@ BLK.Auth = {
         return res;
     },
 
-    Response : (buffer, target) => {
+    Response : (buffer) => {
         var res = { };
-        var data = _decryptPayload(buffer, BLK.key);
-
+		var data = _decryptPayload(buffer, BLK.key);
         var key = Buffer.alloc(16);
         data.copy(key,0,4,20); //                               0x4     : key in payload
 
@@ -147,8 +146,8 @@ BLK.Auth = {
 
         res.key = key;
         res.id = id;
-        res.target = target; //TODO do not need to return res, return target itself
-        console.log('INFO | %s (#%s) key is %s',target.kind, res.id, res.key.toString('hex'));
+        //res.target = target; //TODO do not need to return res, return target itself
+        console.log('INFO | (#%s) key is %s',res.id, res.key.toString('hex'));
         return res;
     }
 };
@@ -171,11 +170,9 @@ BLK.TogglePower = {
     },
 
     Response : (buffer, target) => {
-        var res = {
-            target : target
-        };
+        var res = { };
         var err = buffer.readUInt16LE(34); //           0x22 : Error
-        if(err === 0) {
+        if(target && target.key && err === 0) {
             var data = _decryptPayload(buffer,target.key);
             res.state = data.readUInt8(4)?'on':'off';// 0x4 : State
             if(data.length > 16) {
@@ -183,11 +180,12 @@ BLK.TogglePower = {
 
                 //TODO: parse and learn
                 //console.log('==>',data.toString('hex'));
-             }
-            
-
+            }
         } else {
-            console.log('ERR | Error %s getting device %s power state', err, target.id);
+			if(target) {
+				if(!target.key) console.log('ERR | Target has no key. Execute Auth first', target.id);
+				else console.log('ERR | Error %s getting device %s power state', err, target.id);
+			}
         }        
         return res;
 
@@ -302,13 +300,15 @@ var _cs = (buffer) => (0xbeaf + Array.prototype.slice.call(buffer,0).reduce((p,c
 //TODO: Maybe i will call it translate? :)
 var _readType = (buffer,start) => {
     var type = buffer.toString('utf8',start,buffer.length);
-	console.log('Broadlink device type %s',type);
-    if(type.match('智能插座').length > 0) return 'SMART SOCKET';
+	console.log('Broadlink device name %s',type);
+    if(type.match('智能插座')) return 'SMART SOCKET';
+	if(type.match('智能遥控')) return 'REMOTE CONTROL';
     else return 'UNDEFINED';
 };
 
 var _readDeviceType = (buffer) => {
-    var type = buffer.readUInt16LE(36);
+    var type = buffer.readUInt16LE(52); //36 = calling device type, 52 - actual device type
+	console.log('Device type %s',type.toString(16));
     switch(type){
         case 0: return 'SP1'; break;
         case 0x2711: return 'SP2'; break;
@@ -323,7 +323,7 @@ var _readDeviceType = (buffer) => {
         case 0x273e: return 'SPMini OEM'; break;        
         case 0x2736: return 'SPMiniPlus'; break;
         case 0x2712: return 'RM2'; break;
-        case 0x2737: return 'RM Mini'; break;
+        case 0x2737: return 'RM Mini'; break; //including RM Mini3
         case 0x273d: return 'RM Pro Phicomm'; break;
         case 0x2783: return 'RM2 Home Plus'; break;
         case 0x277c: return 'RM2 Home Plus GDT'; break;
@@ -352,14 +352,15 @@ BLK.get = function(value) {
 
 BLK.getTrigger = function(msg) {    
     var m = BLK.get(msg.command);
-    if(m){
+	//no trigger for multicast Hello
+    if(m && msg.command != BLK.Commands.Hello){
         var n = BLK.getName(msg.command);
         return _blEvnt+n;
     }
     return null;
 };
 
-BLK.parse = function(buffer, targets){
+BLK.parse = function(buffer, source, targets){
     if(buffer.length < 48){ 
         console.log('ERR | Response message is too short (%d bytes)',buffer.length);
         return null;
@@ -382,7 +383,7 @@ BLK.parse = function(buffer, targets){
         //attach it to device 
     }*/
     var command = buffer.readUInt16LE(38);
-    var device = _readDeviceType(buffer);
+    //var device = _readDeviceType(buffer);
     var srs = _readMac(buffer,42);
 
     var msg = BLK.get(command);
@@ -392,12 +393,16 @@ BLK.parse = function(buffer, targets){
     }
 
     var evt = BLK.getTrigger(msg.Request());
-    var target = targets.find(t=>t.id === evt)
-    var res = msg.Response(buffer, target?target.target:null);
-    res.event = evt;
-    res.name = BLK.getName(command);
+	let itm = targets.find(t=>(t.id == evt && t.dest == source));
+	var res = msg.Response(buffer, itm?itm.target:null);
+	if(itm) { 
+		res.event = evt;
+		res.seq = itm.seq;
+	}
+	console.log('EVT: %s',res.event);
+    res.command = BLK.getName(command);
     res.srs = srs;
-    res.kind = device;
+    //res.kind = device;
     return res;
 };
 

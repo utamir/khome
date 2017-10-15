@@ -28,6 +28,7 @@ inherits(broadlink, emitter);
 
 var _updateDevice = async function(self, device){
 	let updated = false;
+	console.log('Updating: %j',device);
 	for (var i = 0; i < devices.length; i++) {
 		if (devices[i].did == device.did) {
 			//update only variable fields
@@ -41,9 +42,9 @@ var _updateDevice = async function(self, device){
 		}
 	}
 	if (!updated) {
-		let d = await _send(self,BLK.Auth.Request(device));
-		device.key = d.key;
-		device.id = d.id;
+		let res = await _send(self,BLK.Auth.Request(device));
+		device.key = res.key;
+		device.id = res.id;
 		let ssdpconf = {
 			udn: device.did,
 			deviceType: {
@@ -77,7 +78,7 @@ var _updateDevice = async function(self, device){
 		let ep = new ssdp(ssdpconf);
 		ep.id = device.did;
 		endpoints.push(ep);
-		console.log('Device added (total:%d) Device: $j| SSDP: %j',devices.length, device, ssdpconf);
+		console.log('Device added (total:%d) Device: %j| SSDP: %j',devices.length, device, ssdpconf);
 		devices.push(device);
 	}
 	
@@ -90,22 +91,24 @@ var _init = async function(self){
 	let _port = self._client.address().port;
 	let discover = ()=> {
 		setTimeout(async ()=>{
-		let device = await _send(self, BLK.Hello.Request(_ip, _port));
-		_updateDevice(self,device);
+		await _send(self, BLK.Hello.Request(_ip, _port));
 		discover();
 		
 	},60000);
 	};
 	
-	let device = await _send(self, BLK.Hello.Request(_ip, _port));
-	_updateDevice(self,device);
+	self._client.on(BROAD_EVENT,device=>{
+		_updateDevice(self,device);
+	});
+	await _send(self, BLK.Hello.Request(_ip, _port));
 	discover();
 	
 	let checkState = ()=>{
 		setTimeout(async ()=>{
 			for (var i = 0; i < devices.length; i++) {
 				let r = await _send(self, BLK.TogglePower.Request(devices[i]));
-				if(r && devices[i].state != r.state) {
+				let device = devices[i];
+				if(r && device.state != r.state) {
 					console.log('Broad STATE: %s',r.state);
 					device.state = r.state;
 					_updateDevice(self,device);
@@ -143,14 +146,20 @@ broadlink.prototype.pair = async function(net){
 		console.log('OK | Broadlink found in pairing mode.');
 		let conn = await this.wlan.connect(apNet, false);
 		console.log('Connected to Wifi with ip: %s',this.self.ip);
-		let desip = '192.168.10.3';
+		let desip = '192.168.10.2';
 		let setip = 'sudo ip a add '+desip+'/24 dev '+this.iface+' && ip route add default via 192.168.10.1 src '+desip+' metric 303 dev '+this.iface+' && ip route add 192.168.10.0/24 via 192.168.10.1 src '+desip+' metric 303 dev '+this.iface;
+		try{
 		let res = await util.promisify(exec)(setip);
+		} catch(e) {
+			console.log('ERR | Broadlink Route already exists %s',e);
+		}
 		console.log('OK | Connected to Broadlink. Starting configuration');
 		let client = await _initUDP(desip);		
 		let _ip = client.address().address;
         let _port = client.address().port;
-		let device = await _send(this, BLK.Hello.Request(_ip, _port), client);
+		//TODO: Skip sending multicast until network issue with wlan0 will be resolved
+		//let device = await _send(this, BLK.Hello.Request(_ip, _port), client);
+		let device = {ip:'192.168.10.1'};
 		device = await _setNetwork(this,device,this.self.ap.ssid,this.self.ap.pwd,true, client);
 		_updateDevice(this,device);
 		conn = await this.wlan.disconnect(apNet, true);
@@ -158,16 +167,17 @@ broadlink.prototype.pair = async function(net){
 		res = await util.promisify(exec)(setip);
 		console.log('OK | Broadlink device setup completed');
 	}
+	
 }
 
 broadlink.prototype.switchPower = async function(id,toState){
 	var device = devices.find(d=>d.did == id);
     if(device) {     
-    let r = await _send(this, BLK.TogglePower.Request(device,toState == 'on'));
-	if(r) {
-		device.state = r.state;
-		_updateDevice(this,device);
-	}
+		let r = await _send(this, BLK.TogglePower.Request(device,toState == 'on'));
+		if(r) {
+			device.state = r.state;
+			_updateDevice(this,device);
+		}
 	} else {
 		console.log('ERR | Device %s is not found',id);
 	}
@@ -210,6 +220,7 @@ broadlink.prototype.onSspdRequest = async function(request){
 }
 
 const BROAD_ADDRESS = '255.255.255.255';
+const BROAD_EVENT = 'BROADCAST';
 var _initUDP = (ip) => {
     return new Promise(function (resolve, reject) {
         var _client = dgram.createSocket({
@@ -222,14 +233,21 @@ var _initUDP = (ip) => {
         });
         _client.on('message', function (message, remote) {
             //console.log(remote.address + ':' + remote.port +' - ' + message);
-            //console.log('Incoming %s bytes from %s:%s',message.length, remote.address, remote.port);
-            
-            var res = BLK.parse(message, broadlink.targets);
+            console.log('Incoming %s bytes from %s:%s',message.length, remote.address, remote.port);
+            console.log('Targets %j',broadlink.targets);
+			var res = BLK.parse(message, remote.address, broadlink.targets);
+			//HACK: Update ip address since it comes unstrustful
+			res.ip = remote.address;
             if(res) {
-                //console.log('RES | Incoming response: %j',res);
-                var idx = broadlink.targets.findIndex(t=>t.id === res.event);
-                broadlink.targets = broadlink.targets.slice(idx+1);            
-                _client.emit(res.event,res);
+                console.log('RES | Incoming response: %j',res);                
+				if(res.event){ //no triggers for multicast
+					var idx = broadlink.targets.findIndex(t=>(t.id == res.event && t.dest == remote.address));
+					broadlink.targets = broadlink.targets.slice(idx-1,idx);
+					_client.emit(res.event + res.seq,res);
+				} else {
+					//this is broadcast message
+					_client.emit('BROADCAST',res);
+				}
             }
         });
 
@@ -239,7 +257,6 @@ var _initUDP = (ip) => {
         }, ()=>{
 			_client.setMulticastTTL(128);
 			_client.setBroadcast(true);
-			//_client.addMembership(BROAD_ADDRESS,ip);
             _client.setMulticastLoopback(true);
 			console.log("UDP is ready");			
             resolve(_client);
@@ -252,42 +269,58 @@ var _send = (context, message, client)=>{
 	client = client || context._client;
     return new Promise(function(resolve, reject) {
         var counter = 0;
+		client.seq = (client.seq % 255) || 0;
         var trigger = BLK.getTrigger(message);
-        client.once(trigger,(m)=>{
-            clearInterval(resend);
-            //console.log('RES | Message %s | %j',m.name,m);
-            resolve(m);
-           });
-        var resend = setInterval(()=>{
-            //console.log('REQ | Resend (%d) message %s | %j',counter++, name, message);
-            message.count = counter;
-			var packet = BLK.getPacket(message);
-			//console.log('Resend target %s',target);
-            client.send(packet, 0, packet.length, 80, target, function(err,bytes){
-            if (err) {
-                console.log('ERR | Message %s | %s',name,err);
-                reject(err);
-            };
-           });    
-        },1000);
+		//no resend when no triggered response required.
+			if(trigger) {
+			client.once(trigger+client.seq,(m)=>{
+				clearInterval(resend);
+				console.log('RES | Message %s | %j',m.command,m);
+				resolve(m);
+			   });
+			var resend = setInterval(()=>{
+				console.log('REQ | Resend (%d) message %s | %j',counter++, name, message);
+				message.count = counter;
+				var packet = BLK.getPacket(message);
+				console.log('Resend target %s',target);
+				client.send(packet, 0, packet.length, 80, target, function(err,bytes){
+				if (err) {
+					console.log('ERR | Message %s | %s',name,err);
+					reject(err);
+				};
+			   });    
+			},3000);
+		}
         var name = BLK.getName(message.command);
-        //console.log('REQ | Message %s | %j',name, message);
+        console.log('REQ | Message %s | %j',name, message);
         var packet = BLK.getPacket(message);
         var target = (message.target && message.target.ip) ? message.target.ip : BROAD_ADDRESS;//'255.255.255.255';//'192.168.10.355'; //224.0.0.251
-        broadlink.targets = broadlink.targets || []; 	
+        if(target == BROAD_ADDRESS){
+			//change to client specific multicast group
+			target = client.address().address.replace(/\.\d+$/g,'.255');
+			console.log('multicast target %s',target);
+		}
+		broadlink.targets = broadlink.targets || []; 	
         if(message.target){
             broadlink.targets.push({
                 id : trigger,
-                target : message.target
+                target : message.target,
+				dest : target,
+				seq : client.seq
             });
         }
-        //console.log('Target %s',target);
+		client.seq++;
+        console.log('SEQ %s',client.seq);
 		client.send(packet, 0, packet.length, 80, target, function(err,bytes){
            if (err) {
                console.log('ERR | Message %s | %s',name,err);
                reject(err);
            };
          });
+		 if(!trigger){
+			//resolve broadcast events immediatly.
+			resolve(null);
+		 }
     });    
 };
 
