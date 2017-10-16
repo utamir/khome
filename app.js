@@ -27,6 +27,11 @@ console.log("Starting KHOME.FR");
 const util = require('util');
 const readline = require('readline');
 const os = require('os');
+process.on('uncaughtException', function(err) {
+  console.log("uncaughtException");
+  console.error(err.stack);
+  process.exit();
+});
 var init = async function(){
 
 //TODO: move to config

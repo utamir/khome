@@ -106,21 +106,29 @@ var _init = async function(self){
 	let checkState = ()=>{
 		setTimeout(async ()=>{
 			for (var i = 0; i < devices.length; i++) {
-				let r = await _send(self, BLK.TogglePower.Request(devices[i]));
 				let device = devices[i];
-				if(r && device.state != r.state) {
-					console.log('Broad STATE: %s',r.state);
-					device.state = r.state;
-					_updateDevice(self,device);
-					let ep = endpoints.find(e=>e.id == devices[i].did);
-					if(ep){
-						console.log('End %s point subscibed',ep.id);
-						ep.notify([
-							{ name:'Status', value: r.state=='on'}
-						]);
-					}else {
-						console.log('Unknown endpoint %s',devices[i].did);
+				
+				//Check state
+				
+				if(device.kind && device.kind.startsWith('SP')){
+					//this is plug
+				let r = await _send(self, BLK.TogglePower.Request(device));
+					if(r && device.state != r.state) {
+						console.log('Broad STATE: %s',r.state);
+						device.state = r.state;
+						_updateDevice(self,device);
+						let ep = endpoints.find(e=>e.id == device.did);
+						if(ep){
+							console.log('End %s point subscibed',ep.id);
+							ep.notify([
+								{ name:'Status', value: r.state=='on'}
+							]);
+						}else {
+							console.log('Unknown endpoint %s',device.did);
+						}
 					}
+				} else {
+					//this is RM
 				}
 			}
 			checkState();

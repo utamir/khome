@@ -383,7 +383,6 @@ BLK.parse = function(buffer, source, targets){
         //attach it to device 
     }*/
     var command = buffer.readUInt16LE(38);
-    //var device = _readDeviceType(buffer);
     var srs = _readMac(buffer,42);
 
     var msg = BLK.get(command);
@@ -398,11 +397,14 @@ BLK.parse = function(buffer, source, targets){
 	if(itm) { 
 		res.event = evt;
 		res.seq = itm.seq;
+		
+	} else {
+		//multicast response
+		res.kind = _readDeviceType(buffer);
 	}
-	console.log('EVT: %s',res.event);
+	//console.log('EVT: %s',res.event);
     res.command = BLK.getName(command);
     res.srs = srs;
-    //res.kind = device;
     return res;
 };
 
