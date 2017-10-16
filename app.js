@@ -68,11 +68,11 @@ try{
 		broadlink.switchPower('34ea34f1349',this.bs?'on':'off');
 	}
 	else if (key.name === '2') {
-		sonoff.turnLearn('34ea34e0bb7c');
+		broadlink.readRemoteCommand('34ea34e0bb7c');
 	}
-	else if (key.name === '2') {
+	/*else if (key.name === '2') {
 		sonoff.switchPower('1000057070');
-	}
+	}*/
 	else if (key.name === 'b') {
 		broadlink.pair();
 	  }

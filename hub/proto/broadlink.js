@@ -9,13 +9,14 @@ BLK.Commands = {
     Discover    : [0x1a,0x1b],
     Join        : [0x14,0x15],
     Auth        : [0x65,0x3e9],
-    TogglePower : [0x6a,0x3ee]
+    SendCommand : [0x6a,0x3ee]
 };
 
-BLK.Hello = {    
+BLK.Hello = {
+	id : 'Hello',
     Request : (ip, port) => {
         var res = { 
-            command : BLK.Commands.Hello,    
+            command : BLK.Commands.Hello,
         };
         
         if(ip && port) {
@@ -52,7 +53,8 @@ BLK.Hello = {
     }
 };
 
-BLK.Discover = {    
+BLK.Discover = {
+	id : 'Discover',
     Request : (target) => {
         var res = {
             command : BLK.Commands.Discover,
@@ -83,6 +85,7 @@ BLK.Discover = {
 };
 
 BLK.Join = {
+	id : 'Join',
     Request : (target, ssid, pwd, security) => {
         var res = {
             isPublic: true,
@@ -114,6 +117,7 @@ BLK.Join = {
 };
 
 BLK.Auth = {
+	id : 'Auth',
     Request : (target) => {
         var res = {  
             command : BLK.Commands.Auth,
@@ -153,9 +157,10 @@ BLK.Auth = {
 };
 
 BLK.TogglePower = {
+	id : 'TogglePower',
     Request : (target, state) => {
         var res = {  
-            command : BLK.Commands.TogglePower,
+            command : BLK.Commands.SendCommand,
             target : target,
             isEncrypted : true
         };
@@ -190,6 +195,63 @@ BLK.TogglePower = {
         return res;
 
     }
+};
+
+BLK.StartLearn = {
+	id : 'StartLearn',
+	Request : (target) => {
+		var res = {  
+            command : BLK.Commands.SendCommand,
+            target : target,
+            isEncrypted : true
+        };
+		if(target && target.id && target.key){
+            var buffer = Buffer.alloc(16);
+            buffer.writeUInt8(3); //          0x03 : enter learning mode
+            res.payload = buffer;
+        }
+        return res;
+	},
+	
+	Response : (buffer) => {
+		var res = { };
+        //no response here
+console.log('LEARN %o',buffer);		
+        return res;
+	}
+};
+
+BLK.ReadLearn = {
+	id : 'ReadLearn',
+	Request : (target) => {
+		var res = {  
+            command : BLK.Commands.SendCommand,
+            target : target,
+            isEncrypted : true
+        };
+		if(target && target.id && target.key){
+            var buffer = Buffer.alloc(16);
+            buffer.writeUInt8(4); //          0x04 : read learning mode
+            res.payload = buffer;
+        }
+        return res;
+	},
+	
+	Response : (buffer) => {
+		var res = { };
+        var err = buffer.readUInt16LE(34); //           0x22 : Error
+        if(target && target.key && err === 0) {
+			console.log('Read from learcn');
+			var data = _decryptPayload(buffer,target.key);
+			res.data = data;
+		} else {
+			if(target) {
+				if(!target.key) console.log('ERR | Target has no key. Execute Auth first', target.id);
+				else console.log('ERR | Error %s getting device %s power state', err, target.id);
+			}
+        }        
+        return res;
+	}
 };
 
 BLK.getPacket = (message, deviceId = 0x7D00 ,currentCID = [0xa5,0xaa,0x55,0x5a,0xa5,0xaa,0x55,0x0]) =>{
@@ -344,18 +406,20 @@ BLK.getName = function(value) {
   return Object.keys(BLK.Commands).find(key => Array.isArray(value) ? BLK.Commands[key] === value : BLK.Commands[key].includes(value));
 };
 
-BLK.get = function(value) {
+BLK.getHandlers = function(value) {
   var m = BLK.getName(value);
   if(!m) return null;
-  return this[m];
+  let methods = Object.getOwnPropertyNames(this).filter(p=> typeof this[p] === 'object');
+  return methods.filter(el=>{
+	  let req = this[el].Request;
+	  if(req) return BLK.getName(req().command) == m;
+  });  
 };
 
-BLK.getTrigger = function(msg) {    
-    var m = BLK.get(msg.command);
+BLK.getTrigger = function(mgsid) {
 	//no trigger for multicast Hello
-    if(m && msg.command != BLK.Commands.Hello){
-        var n = BLK.getName(msg.command);
-        return _blEvnt+n;
+    if(mgsid && mgsid != BLK.Hello.id){
+        return _blEvnt+mgsid;
     }
     return null;
 };
@@ -385,25 +449,32 @@ BLK.parse = function(buffer, source, targets){
     var command = buffer.readUInt16LE(38);
     var srs = _readMac(buffer,42);
 
-    var msg = BLK.get(command);
-    if(!msg){
+    var handlers = BLK.getHandlers(command);
+	console.log('HDL: %j',handlers);
+    if(!handlers || handlers.length <= 0){
         console.log('TODO | Unknown incoming message 0x%s',command.toString(16));
         return null;
     }
-
-    var evt = BLK.getTrigger(msg.Request());
-	let itm = targets.find(t=>(t.id == evt && t.dest == source));
-	var res = msg.Response(buffer, itm?itm.target:null);
-	if(itm) { 
-		res.event = evt;
+	
+    //var evt = BLK.getTrigger(msg.Request());
+	let itm = targets.find(t=>(handlers.map(h=>BLK.getTrigger(h)).includes(t.id) && t.dest == source));
+	console.log('ITM : %j',itm);
+	if(itm){
+		var mid = itm.id.replace(_blEvnt,'');
+		var res = this[mid].Response(buffer, itm.target);
+		res.event = BLK.getTrigger(itm.id.replace(_blEvnt,''));
 		res.seq = itm.seq;
-		
 	} else {
+		var mid = handlers[0];
+		var res = this[mid].Response(buffer);
+		
 		//multicast response
 		res.kind = _readDeviceType(buffer);
 	}
+	
 	//console.log('EVT: %s',res.event);
     res.command = BLK.getName(command);
+	res.id = mid;
     res.srs = srs;
     return res;
 };

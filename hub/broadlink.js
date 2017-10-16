@@ -42,7 +42,7 @@ var _updateDevice = async function(self, device){
 		}
 	}
 	if (!updated) {
-		let res = await _send(self,BLK.Auth.Request(device));
+		let res = await _send(self,BLK.Auth,[device]);
 		device.key = res.key;
 		device.id = res.id;
 		let ssdpconf = {
@@ -89,9 +89,10 @@ var _init = async function(self){
 	self._client = await _initUDP(self.self.ip);
 	let _ip = self._client.address().address
 	let _port = self._client.address().port;
+	
 	let discover = ()=> {
 		setTimeout(async ()=>{
-		await _send(self, BLK.Hello.Request(_ip, _port));
+		await _send(self, BLK.Hello, [_ip, _port]);
 		discover();
 		
 	},60000);
@@ -100,7 +101,7 @@ var _init = async function(self){
 	self._client.on(BROAD_EVENT,device=>{
 		_updateDevice(self,device);
 	});
-	await _send(self, BLK.Hello.Request(_ip, _port));
+	await _send(self, BLK.Hello, [_ip, _port]);
 	discover();
 	
 	let checkState = ()=>{
@@ -112,7 +113,7 @@ var _init = async function(self){
 				
 				if(device.kind && device.kind.startsWith('SP')){
 					//this is plug
-				let r = await _send(self, BLK.TogglePower.Request(device));
+				let r = await _send(self, BLK.TogglePower,[device]);
 					if(r && device.state != r.state) {
 						console.log('Broad STATE: %s',r.state);
 						device.state = r.state;
@@ -181,10 +182,26 @@ broadlink.prototype.pair = async function(net){
 broadlink.prototype.switchPower = async function(id,toState){
 	var device = devices.find(d=>d.did == id);
     if(device) {     
-		let r = await _send(this, BLK.TogglePower.Request(device,toState == 'on'));
+		let r = await _send(this, BLK.TogglePower,[device,toState == 'on']);
 		if(r) {
 			device.state = r.state;
 			_updateDevice(this,device);
+		}
+	} else {
+		console.log('ERR | Device %s is not found',id);
+	}
+}
+
+broadlink.prototype.readRemoteCommand = async function(id){
+	var device = devices.find(d=>d.did == id);
+    if(device) {     
+		let r = await _send(this, BLK.StartLearn,[device]);
+		if(r) {
+			console.log('START LEARN %j',r);
+		}
+		r = await _send(this, BLK.ReadLearn,[device]);
+		if(r) {
+			console.log('READ LEARN %j',r);
 		}
 	} else {
 		console.log('ERR | Device %s is not found',id);
@@ -273,17 +290,20 @@ var _initUDP = (ip) => {
     });    
 };
 
-var _send = (context, message, client)=>{
+var _send = (context, request, args, client)=>{
 	client = client || context._client;
+	console.log('RRRE: %o', request);
+	var message = request.Request.apply(context, args);        
     return new Promise(function(resolve, reject) {
         var counter = 0;
 		client.seq = (client.seq % 255) || 0;
-        var trigger = BLK.getTrigger(message);
+        var trigger = BLK.getTrigger(request.id);
+		console.log('TRG %j',trigger);
 		//no resend when no triggered response required.
 			if(trigger) {
 			client.once(trigger+client.seq,(m)=>{
 				clearInterval(resend);
-				console.log('RES | Message %s | %j',m.command,m);
+				console.log('RES | Message %s | %j',m.id,m);
 				resolve(m);
 			   });
 			var resend = setInterval(()=>{
@@ -299,7 +319,7 @@ var _send = (context, message, client)=>{
 			   });    
 			},3000);
 		}
-        var name = BLK.getName(message.command);
+		var name = request.id;
         console.log('REQ | Message %s | %j',name, message);
         var packet = BLK.getPacket(message);
         var target = (message.target && message.target.ip) ? message.target.ip : BROAD_ADDRESS;//'255.255.255.255';//'192.168.10.355'; //224.0.0.251
@@ -336,7 +356,7 @@ var _setNetwork = (self, device, ssid, pwd, force, client) => {
 	return new Promise(function(resolve, reject) {
     console.log('REQ | Pair %s with ssid:%s (%s)',device.type, ssid, pwd);
     if(!force){
-        _send(self,BLK.Discover.Request(device), client).then(o => {
+        _send(self,BLK.Discover,[device], client).then(o => {
             var found = false;
             for(var i=0;i<o.networks.length;i++){
                 var net = o.networks[i];
@@ -352,7 +372,7 @@ var _setNetwork = (self, device, ssid, pwd, force, client) => {
             if(!found){
                 setTimeout(_setNetwork,3000, self,device,ssid,pwd);
             } else {
-                _send(self,BLK.Join.Request(device, ssid, pwd), client).then(()=>{
+                _send(self,BLK.Join,[device, ssid, pwd], client).then(()=>{
                     console.log('Pairing with %s is completed. Please check that led is not blinking.',device.type);
 					resolve(device);
                 });
@@ -360,7 +380,7 @@ var _setNetwork = (self, device, ssid, pwd, force, client) => {
 
         });
     } else {
-        _send(self,BLK.Join.Request(device, ssid, pwd), client).then(()=>{
+        _send(self,BLK.Join,[device, ssid, pwd], client).then(()=>{
                 console.log('Pairing with %s is completed. Please check that led is not blinking.',device.type);
 				resolve(device);
             });
