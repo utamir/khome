@@ -140,7 +140,7 @@ BLK.Auth = {
         return res;
     },
 
-    Response : (buffer) => {
+    Response : (buffer, target) => {
         var res = { };
 		var data = _decryptPayload(buffer, BLK.key);
         var key = Buffer.alloc(16);
@@ -150,7 +150,7 @@ BLK.Auth = {
 
         res.key = key;
         res.id = id;
-        //res.target = target; //TODO do not need to return res, return target itself
+        res.target = target; //TODO do not need to return res, return target itself
         console.log('INFO | (#%s) key is %s',res.id, res.key.toString('hex'));
         return res;
     }
@@ -213,10 +213,27 @@ BLK.StartLearn = {
         return res;
 	},
 	
-	Response : (buffer) => {
+	Response : (buffer, target) => {
 		var res = { };
-        //no response here
-console.log('LEARN %o',buffer);		
+		console.log('LEARN RAW: %o',buffer);
+            
+        var err = buffer.readUInt16LE(34); //           0x22 : Error
+        if(target && target.key && err === 0) {
+            var data = _decryptPayload(buffer,target.key);
+            //res.state = data.readUInt8(4)?'on':'off';// 0x4 : State
+			console.log('LEARN: %o',data);
+            if(data.length > 16) {
+                //this is info message
+
+                //TODO: parse and learn
+                //console.log('==>',data.toString('hex'));
+            }
+        } else {
+			if(target) {
+				if(!target.key) console.log('ERR | Target has no key. Execute Auth first', target.id);
+				else console.log('ERR | Error %s getting device %s start learn state', err, target.id);
+			}
+        }        
         return res;
 	}
 };
@@ -237,7 +254,7 @@ BLK.ReadLearn = {
         return res;
 	},
 	
-	Response : (buffer) => {
+	Response : (buffer, target) => {
 		var res = { };
         var err = buffer.readUInt16LE(34); //           0x22 : Error
         if(target && target.key && err === 0) {
@@ -247,7 +264,7 @@ BLK.ReadLearn = {
 		} else {
 			if(target) {
 				if(!target.key) console.log('ERR | Target has no key. Execute Auth first', target.id);
-				else console.log('ERR | Error %s getting device %s power state', err, target.id);
+				else console.log('ERR | Error %s getting device %s learn recordings', err, target.id);
 			}
         }        
         return res;
@@ -425,6 +442,7 @@ BLK.getTrigger = function(mgsid) {
 };
 
 BLK.parse = function(buffer, source, targets){
+	console.log('PARSE: %o',buffer);
     if(buffer.length < 48){ 
         console.log('ERR | Response message is too short (%d bytes)',buffer.length);
         return null;
@@ -461,8 +479,9 @@ BLK.parse = function(buffer, source, targets){
 	console.log('ITM : %j',itm);
 	if(itm){
 		var mid = itm.id.replace(_blEvnt,'');
+		console.log('INVOKE %s',mid);
 		var res = this[mid].Response(buffer, itm.target);
-		res.event = BLK.getTrigger(itm.id.replace(_blEvnt,''));
+		res.event = BLK.getTrigger(mid);
 		res.seq = itm.seq;
 	} else {
 		var mid = handlers[0];
@@ -474,7 +493,7 @@ BLK.parse = function(buffer, source, targets){
 	
 	//console.log('EVT: %s',res.event);
     res.command = BLK.getName(command);
-	res.id = mid;
+	res.rid = mid;
     res.srs = srs;
     return res;
 };

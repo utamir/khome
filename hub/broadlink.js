@@ -292,7 +292,6 @@ var _initUDP = (ip) => {
 
 var _send = (context, request, args, client)=>{
 	client = client || context._client;
-	console.log('RRRE: %o', request);
 	var message = request.Request.apply(context, args);        
     return new Promise(function(resolve, reject) {
         var counter = 0;
@@ -303,7 +302,7 @@ var _send = (context, request, args, client)=>{
 			if(trigger) {
 			client.once(trigger+client.seq,(m)=>{
 				clearInterval(resend);
-				console.log('RES | Message %s | %j',m.id,m);
+				console.log('RES | Message %s | %j',m.rid,m);
 				resolve(m);
 			   });
 			var resend = setInterval(()=>{
